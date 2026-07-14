@@ -1,0 +1,74 @@
+server:
+  port: 8088
+  forward-headers-strategy: framework
+
+spring:
+  datasource:
+    hikari:
+      connection-timeout: 20000
+      maximum-pool-size: 5
+    url: jdbc:postgresql://localhost:5432/pos_sys_db
+    password: 1234
+    username: postgres
+    driver-class-name: org.postgresql.Driver
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 20MB
+      max-request-size: 25MB
+      file-size-threshold: 2KB
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false            # use logger instead
+    properties:
+      hibernate:
+        format_sql: true
+        highlight_sql: true
+        #        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+
+# JWT Configuration
+jwt:
+  key-id : "main-key"
+  public-key: "classpath:keys/public.pem"
+  private-key: "classpath:keys/private.pem"
+  access-ttl-seconds: 900
+  refresh-ttl-days: 7
+  issuer: "main-api"
+  audience: "clients"
+
+# CORS Configuration (needed for your SecurityConfig)
+app:
+  cors:
+    allowed-origins: "http://localhost:3000,http://localhost:3001"
+    max-age: 3600
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE     # <— Hibernate 6 bound params
+    org.hibernate.orm.jdbc.extract: INFO
+    com.spring.app: DEBUG
+
+# Swagger/OpenAPI
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  show-actuator: false
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+
+file:
+  server-path: D:/upload-files/
+  client-path: /api/v1/image
+  base-url: http://localhost:8088${file.client-path}
