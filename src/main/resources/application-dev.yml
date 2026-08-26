@@ -7,8 +7,8 @@ spring:
     hikari:
       connection-timeout: 20000
       maximum-pool-size: 5
-    url: jdbc:postgresql://localhost:5432/pos_sys_db
-    password: 1234
+    url: jdbc:postgresql://localhost:5432/postgres
+    password: Panhaoudom123
     username: postgres
     driver-class-name: org.postgresql.Driver
 
