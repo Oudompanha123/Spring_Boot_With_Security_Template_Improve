@@ -7,9 +7,12 @@ spring:
     hikari:
       connection-timeout: 20000
       maximum-pool-size: 5
-    url: jdbc:postgresql://localhost:5432/postgres
-    password: Panhaoudom123
-    username: postgres
+    # Credentials come from the environment. The fallbacks are local-development
+    # conveniences; the committed password that used to live here should be treated
+    # as compromised and rotated (it is still in this repository's git history).
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
   servlet:
@@ -21,42 +24,43 @@ spring:
 
   jpa:
     hibernate:
+      # Fine for local iteration. Real environments want `validate` plus a
+      # migration tool (Flyway/Liquibase) so schema changes are reviewable.
       ddl-auto: update
     open-in-view: false
-    show-sql: false            # use logger instead
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
         highlight_sql: true
-        #        dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           time_zone: UTC
 
-# JWT Configuration
-jwt:
-  key-id : "main-key"
-  public-key: "classpath:keys/public.pem"
-  private-key: "classpath:keys/private.pem"
-  access-ttl-seconds: 900
-  refresh-ttl-days: 7
-  issuer: "main-api"
-  audience: "clients"
-
-# CORS Configuration (needed for your SecurityConfig)
+# CORS
 app:
   cors:
     allowed-origins: "http://localhost:3000,http://localhost:3001"
     max-age: 3600
+  # Creates the MANAGER and ADMIN accounts that signup deliberately cannot create.
+  # Override the passwords, or leave this off, anywhere that is not a laptop.
+  seed:
+    enabled: true
+    admin-email: admin@example.com
+    manager-email: manager@example.com
+    user-email: user@example.com
 
 logging:
   level:
     root: INFO
-    org.hibernate.SQL: DEBUG
-    org.hibernate.orm.jdbc.bind: TRACE     # <— Hibernate 6 bound params
-    org.hibernate.orm.jdbc.extract: INFO
     com.spring.app: DEBUG
+    # SQL statements are useful and contain no values.
+    org.hibernate.SQL: DEBUG
+    # Bound parameters are NOT enabled. At TRACE this logger prints every value
+    # sent to the database, which on a signup means the BCrypt hash and on a
+    # login lookup the email - exactly what must never reach a log file.
+    org.hibernate.orm.jdbc.bind: INFO
+    org.hibernate.orm.jdbc.extract: INFO
 
-# Swagger/OpenAPI
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

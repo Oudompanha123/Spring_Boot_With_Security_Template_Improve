@@ -3,3 +3,33 @@ spring:
     name: spring-app
   profiles:
     active: dev
+
+# ---------------------------------------------------------------------------
+# JWT
+#
+# There is NO usable default signing secret on purpose. A real default would be
+# committed to this repository, which means every deployment that forgot to
+# override it would sign tokens with a key the whole internet can read - and it
+# would start up cleanly, so nobody would notice.
+#
+# The empty fallback below is not a key: JwtTokenProvider rejects it, and
+# rejects anything shorter than the 32 bytes HS256 requires. It exists only so
+# the failure is a JwtSecretConfigurationException, which JwtSecretFailureAnalyzer
+# prints as a readable APPLICATION FAILED TO START block. Without it, an unset
+# variable fails as an unresolved-placeholder error buried under four nested
+# bean-creation exceptions.
+#
+# Supply the secret either way:
+#   export JWT_SECRET="$(openssl rand -base64 48)"
+# or in ./config/application.yml, which is git-ignored and read automatically.
+# ---------------------------------------------------------------------------
+jwt:
+  secret: ${JWT_SECRET:}
+  issuer: spring-app
+  # Access tokens are short-lived because nothing can revoke one: until it expires it is
+  # valid wherever it is presented, so its lifetime IS the window an attacker gets.
+  access-token-ttl: 5m
+  # Refresh tokens live longer, but hours rather than days: they can be revoked, yet a stolen
+  # one still buys new access tokens until someone notices. Rotation on every exchange means a
+  # theft is at least visible - the victim's next refresh fails.
+  refresh-token-ttl: 8h

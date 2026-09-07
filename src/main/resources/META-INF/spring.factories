@@ -1,0 +1,4 @@
+# FailureAnalyzers run before the application context exists, so they cannot be
+# beans and are registered here instead.
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+com.spring.app.config.JwtSecretFailureAnalyzer

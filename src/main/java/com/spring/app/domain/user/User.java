@@ -1,134 +1,107 @@
 package com.spring.app.domain.user;
 
 import com.spring.app.domain.BaseEntity;
-import com.spring.app.domain.role.Role;
-import com.spring.app.enums.Status;
-import jakarta.persistence.*;
-import lombok.*;
+import com.spring.app.enums.Role;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 
 import java.time.Instant;
-import java.util.HashSet;
-import java.util.Set;
 
 @Entity
 @Table(name = "users", indexes = {
-        @Index(name = "idx_username", columnList = "username"),
-        @Index(name = "idx_email", columnList = "email"),
-        @Index(name = "idx_status", columnList = "status"),
-        @Index(name = "idx_username_status", columnList = "username, status"),
-        @Index(name = "idx_email_status", columnList = "email, status")
+        @Index(name = "idx_users_email", columnList = "email", unique = true),
+        @Index(name = "idx_users_username", columnList = "username")
 })
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@ToString(exclude = "password") // never let a stray toString() put the hash in a log line
 public class User extends BaseEntity {
+
+    /** How many consecutive failures lock the account. */
+    public static final int MAX_FAILED_LOGINS = 5;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "user_id")
-    private Long userId;
+    @Column(name = "id")
+    private Long id;
 
-    @Column(name = "username", unique = true, nullable = false, length = 50)
-    private String username;
-
-    @Column(name = "email", unique = true, nullable = false, length = 100)
+    /** Login identifier. Unique because it is what {@code CustomUserDetailsService} loads by. */
+    @Column(name = "email", unique = true, nullable = false, length = 180)
     private String email;
 
-    @Column(name = "password", nullable = false)
+    /** BCrypt hash — never the raw password. */
+    @Column(name = "password", nullable = false, length = 100)
     private String password;
 
-    @Column(name = "full_name", length = 100)
-    private String fullName;
+    /** Display name. Not the login identifier; see {@code CustomUserDetails#getUsername()}. */
+    @Column(name = "username", nullable = false, length = 80)
+    private String username;
 
-    @Column(name = "phone", length = 20)
-    private String phone;
-
-    @Column(name = "profile", length = 100)
-    private String profileImage;
-
-    @Column(name = "cover_image", length = 100)
-    private String coverImage;
-
-    @Column(name = "bio", columnDefinition = "TEXT")
-    private String bio;
-
+    /*
+     * Stored as STRING rather than ORDINAL on purpose.
+     *
+     * EnumType.ORDINAL persists the declaration index (0, 1, 2...). Inserting or reordering a
+     * constant then silently re-points every existing row at a different role: add a value above
+     * ADMIN and yesterday's ADMIN rows become MANAGER. For a column that decides authorization,
+     * that is a privilege-escalation bug written into the schema, and nothing in the code fails
+     * loudly when it happens.
+     *
+     * EnumType.STRING persists the name, so rows stay meaningful independently of declaration
+     * order, the column is readable in ad-hoc SQL and audits, and a constant that is renamed or
+     * deleted blows up at read time instead of quietly resolving to the wrong role.
+     */
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false)
+    @Column(name = "role", nullable = false, length = 20)
     @Builder.Default
-    private Status status = Status.ACTIVE;
+    private Role role = Role.USER;
 
-    @Column(name = "email_verified", nullable = false)
+    @Column(name = "enabled", nullable = false)
     @Builder.Default
-    private Boolean emailVerified = false;
+    private boolean enabled = true;
 
-    @Column(name = "account_locked", nullable = false)
+    @Column(name = "locked", nullable = false)
     @Builder.Default
-    private Boolean accountLocked = false;
+    private boolean locked = false;
 
-    @Column(name = "account_expired", nullable = false)
+    @Column(name = "failed_login_count", nullable = false)
     @Builder.Default
-    private Boolean accountExpired = false;
+    private int failedLoginCount = 0;
 
-    @Column(name = "credentials_expired", nullable = false)
-    @Builder.Default
-    private Boolean credentialsExpired = false;
+    @Column(name = "last_login_at")
+    private Instant lastLoginAt;
 
-    @Column(name = "failed_login_attempts")
-    @Builder.Default
-    private Integer failedLoginAttempts = 0;
-
-    @Column(name = "last_login")
-    private Instant lastLogin;
-
-    // Many-to-Many relationship with Role
-    @ManyToMany(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
-    @JoinTable(
-            name = "user_roles",
-            joinColumns = @JoinColumn(name = "user_id"),
-            inverseJoinColumns = @JoinColumn(name = "role_id")
-    )
-    @Builder.Default
-    private Set<Role> roles = new HashSet<>();
-
-    // Convenience methods
-    public void addRole(Role role) {
-        roles.add(role);
-        role.getUsers().add(this);
+    /**
+     * Records one failed attempt and locks the account once the threshold is reached.
+     *
+     * @return {@code true} when this failure is the one that locked the account
+     */
+    public boolean registerFailedLogin() {
+        this.failedLoginCount++;
+        if (this.failedLoginCount >= MAX_FAILED_LOGINS) {
+            this.locked = true;
+        }
+        return this.locked;
     }
 
-    public void removeRole(Role role) {
-        roles.remove(role);
-        role.getUsers().remove(this);
-    }
-
-    // Account status helper methods for Spring Security
-    public boolean isAccountNonExpired() {
-        return !accountExpired;
-    }
-
-    public boolean isAccountNonLocked() {
-        return !accountLocked;
-    }
-
-    public boolean isCredentialsNonExpired() {
-        return !credentialsExpired;
-    }
-
-    public boolean isEnabled() {
-        return status == Status.ACTIVE;
-    }
-
-    public void incrementFailedLoginAttempts() {
-        this.failedLoginAttempts = (this.failedLoginAttempts == null) ? 1 : this.failedLoginAttempts + 1;
-    }
-
-    public void resetFailedLoginAttempts() {
-        this.failedLoginAttempts = 0;
-    }
-
-    public void updateLastLogin() {
-        this.lastLogin = Instant.now();
+    /** Clears the failure streak and stamps the successful login. */
+    public void registerSuccessfulLogin() {
+        this.failedLoginCount = 0;
+        this.lastLoginAt = Instant.now();
     }
 }

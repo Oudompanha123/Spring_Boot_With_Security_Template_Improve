@@ -1,248 +1,225 @@
 package com.spring.app.service.auth;
 
-import com.spring.app.domain.role.Role;
-import com.spring.app.domain.role.RoleRepository;
+import com.spring.app.domain.token.RefreshToken;
+import com.spring.app.domain.token.RefreshTokenRepository;
 import com.spring.app.domain.user.User;
 import com.spring.app.domain.user.UserRepository;
-import com.spring.app.enums.Status;
-import com.spring.app.exception.BusinessException;
+import com.spring.app.enums.Role;
+import com.spring.app.exception.ApiException;
+import com.spring.app.exception.ErrorCode;
 import com.spring.app.payload.auth.AuthResponse;
 import com.spring.app.payload.auth.LoginRequest;
-import com.spring.app.payload.auth.RegisterRequest;
+import com.spring.app.payload.auth.SignupRequest;
 import com.spring.app.payload.user.UserResponse;
-import com.spring.app.security.SecurityUser;
-import com.spring.app.util.JwtUtil;
+import com.spring.app.security.CustomUserDetails;
+import com.spring.app.security.JwtTokenProvider;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.authentication.*;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.LockedException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
-import java.util.Set;
-
+/**
+ * Signup, login, refresh and logout.
+ *
+ * <p>Nothing in this class logs an email, a password, a hash or a token value. User ids are used
+ * instead: they identify an account for support and forensics without turning the log file into a
+ * credential store or a list of customer addresses.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class AuthServiceImpl implements AuthService {
 
-    private static final String DEFAULT_USER_ROLE = "USER";
-    private static final String TOKEN_TYPE_REFRESH = "refresh";
-
     private final AuthenticationManager authenticationManager;
+    private final LoginAttemptService loginAttemptService;
     private final UserRepository userRepository;
-    private final RoleRepository roleRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtUtil jwtUtil;
+    private final JwtTokenProvider tokenProvider;
+
+    // ========================= signup =========================
 
     @Override
     @Transactional
-    public UserResponse register(RegisterRequest request) {
-        validateRegisterRequest(request);
+    public UserResponse signup(SignupRequest request) {
+        String email = normaliseEmail(request.getEmail());
 
-        log.info("Registering user: {}", request.getUsername());
+        if (userRepository.existsByEmail(email)) {
+            // 409 + U002. The email is the account identifier, so a duplicate is a conflict on a
+            // resource the caller already knows about; this is not the enumeration-sensitive path.
+            throw new ApiException(ErrorCode.EMAIL_ALREADY_EXISTS, "Signup rejected: email already registered");
+        }
 
-        checkUserExistence(request);
-        User user = createUser(request);
-        User savedUser = userRepository.save(user);
+        User user = User.builder()
+                .email(email)
+                .username(request.getUsername().trim())
+                // The raw password exists only as a local variable inside the encoder from here on.
+                .password(passwordEncoder.encode(request.getPassword()))
+                // Hard-coded, not read from the request. This is the whole defence against
+                // privilege escalation at signup: there is no path from the payload to this value.
+                .role(Role.USER)
+                .enabled(true)
+                .locked(false)
+                .failedLoginCount(0)
+                .build();
 
-        log.info("User registered successfully: {}", savedUser.getUsername());
-        return mapToUserResponse(savedUser);
+        try {
+            user = userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            // Two concurrent signups can both pass the existsByEmail check; the unique index is
+            // what actually decides. Report it as the same conflict rather than a 500.
+            throw new ApiException(ErrorCode.EMAIL_ALREADY_EXISTS, "Signup lost the unique-email race");
+        }
+
+        log.info("Account created (userId={}, role={})", user.getId(), user.getRole());
+        return UserResponse.from(user);
     }
 
+    // ========================= login =========================
+
+    /**
+     * Authenticates and issues a token pair.
+     *
+     * <p>Deliberately not {@code @Transactional}: the failure counter in
+     * {@link LoginAttemptService} has to commit even though this method then throws.
+     *
+     * <p>The account-state checks (locked, disabled) happen inside
+     * {@code DaoAuthenticationProvider} <em>before</em> the password is compared, so a locked
+     * account reports itself as locked whether or not the submitted password was right.
+     */
     @Override
-    @Transactional(readOnly = true)
     public AuthResponse login(LoginRequest request) {
-        validateLoginRequest(request);
-
-        log.info("Login attempt for user: {}", request.getUsername());
-
-        User user = authenticateUser(request);
-        TokenPair tokens = generateTokens(user);
-
-        log.info("User logged in successfully: {}", user.getUsername());
-        return buildAuthResponse(user, tokens);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public AuthResponse refreshToken(String refreshToken) {
-        if (!StringUtils.hasText(refreshToken)) {
-            throw new BadCredentialsException("Refresh token cannot be null or empty");
-        }
-
-        log.info("Processing refresh token request");
+        String email = normaliseEmail(request.getEmail());
 
         try {
-            Jwt jwt = jwtUtil.decodeToken(refreshToken);
-            jwtUtil.validateTokenType(jwt, TOKEN_TYPE_REFRESH);
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(email, request.getPassword()));
 
-            String username = jwt.getClaims().get("sub").toString();
-            if (!StringUtils.hasText(username)) {
-                throw new BadCredentialsException("Invalid token: missing subject");
-            }
+            CustomUserDetails principal = (CustomUserDetails) authentication.getPrincipal();
+            User user = loginAttemptService.recordSuccess(principal.getId());
 
-            User user = loadUserWithDetails(username);
-            String newAccessToken = jwtUtil.generateAccessToken(user);
-            TokenPair tokens = new TokenPair(newAccessToken, refreshToken);
-
-            log.info("Token refreshed successfully for user: {}", username);
-            return buildAuthResponse(user, tokens);
-
-        } catch (JwtException e) {
-            log.warn("Invalid refresh token: {}", e.getMessage());
-            throw new BadCredentialsException("Invalid refresh token", e);
-        }
-    }
-
-    @Override
-    public void logout() {
-        // In JWT stateless architecture, logout is handled client-side by removing the token
-        // For enhanced security, you could maintain a token blacklist in Redis or database
-        log.info("User logout requested");
-    }
-
-    private void validateRegisterRequest(RegisterRequest request) {
-        if (request == null) {
-            throw new IllegalArgumentException("Register request cannot be null");
-        }
-
-        if (!StringUtils.hasText(request.getUsername())) {
-            throw new IllegalArgumentException("Username cannot be null or empty");
-        }
-
-        if (!StringUtils.hasText(request.getEmail())) {
-            throw new IllegalArgumentException("Email cannot be null or empty");
-        }
-
-        if (!StringUtils.hasText(request.getPassword())) {
-            throw new IllegalArgumentException("Password cannot be null or empty");
-        }
-
-        // Add more validation as needed (email format, password strength, etc.)
-    }
-
-    private void validateLoginRequest(LoginRequest request) {
-        if (request == null) {
-            throw new IllegalArgumentException("Login request cannot be null");
-        }
-
-        if (!StringUtils.hasText(request.getUsername())) {
-            throw new IllegalArgumentException("Username cannot be null or empty");
-        }
-
-        if (!StringUtils.hasText(request.getPassword())) {
-            throw new IllegalArgumentException("Password cannot be null or empty");
-        }
-    }
-
-    private void checkUserExistence(RegisterRequest request) {
-        if (userRepository.existsByUsernameAndStatus(request.getUsername(), Status.ACTIVE)) {
-            log.warn("Registration attempt with existing username: {}", request.getUsername());
-            throw new BusinessException("Username already exists");
-        }
-
-        if (userRepository.existsByEmailAndStatus(request.getEmail(), Status.ACTIVE)) {
-            log.warn("Registration attempt with existing email: {}", request.getEmail());
-            throw new BusinessException("Email already exists");
-        }
-    }
-
-    private User createUser(RegisterRequest request) {
-        Role userRole = roleRepository.findByRoleName(DEFAULT_USER_ROLE)
-                .orElseThrow(() -> new BusinessException("Default USER role not found"));
-
-        User user = new User();
-        user.setUsername(request.getUsername());
-        user.setEmail(request.getEmail());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
-        user.setFullName(request.getFullName());
-        user.setPhone(request.getPhone());
-        user.setStatus(Status.ACTIVE);
-        user.setEmailVerified(false);
-        user.setRoles(Set.of(userRole));
-
-        return user;
-    }
-
-    private User authenticateUser(LoginRequest request) {
-        try {
-            UsernamePasswordAuthenticationToken authToken =
-                    new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword());
-
-            Authentication authentication = authenticationManager.authenticate(authToken);
-            SecurityUser principal = (SecurityUser) authentication.getPrincipal();
-
-            return principal.user();
+            log.info("Login succeeded (userId={})", user.getId());
+            return issueTokens(user);
 
         } catch (BadCredentialsException e) {
-            log.warn("Invalid credentials for user: {}", request.getUsername());
-            throw new BadCredentialsException("Invalid username or password");
-        } catch (DisabledException e) {
-            log.warn("Account disabled for user: {}", request.getUsername());
-            throw new BadCredentialsException("Account is disabled");
-        } catch (LockedException e) {
-            log.warn("Account locked for user: {}", request.getUsername());
-            throw new BadCredentialsException("Account is locked");
-        } catch (AccountExpiredException e) {
-            log.warn("Account expired for user: {}", request.getUsername());
-            throw new BadCredentialsException("Account is expired");
-        } catch (CredentialsExpiredException e) {
-            log.warn("Credentials expired for user: {}", request.getUsername());
-            throw new BadCredentialsException("Credentials are expired");
-        } catch (Exception e) {
-            log.error("Authentication error for user: {}", request.getUsername(), e);
-            throw new BadCredentialsException("Authentication failed");
+            // One catch for both "no such email" and "wrong password": the provider hides the
+            // difference, and so does the response the advice builds from this exception.
+            if (loginAttemptService.recordFailure(email)) {
+                // The attempt that crossed the threshold reports the lock (403 + A006) rather than
+                // another 401, so the user is told why further attempts will not help. This does
+                // reveal that the account exists; the README records that trade-off.
+                throw new LockedException("Account locked after too many failed attempts");
+            }
+            throw e;
         }
     }
 
-    private TokenPair generateTokens(User user) {
-        String accessToken = jwtUtil.generateAccessToken(user);
-        String refreshToken = jwtUtil.generateRefreshToken(user.getUserId().toString());
-        return new TokenPair(accessToken, refreshToken);
+    // ========================= refresh =========================
+
+    @Override
+    @Transactional
+    public AuthResponse refresh(String refreshTokenValue) {
+        // Two checks, and both are needed. The signature proves the token was issued by this
+        // service and has not been altered or expired; the row proves it has not been revoked
+        // since. Neither alone is sufficient: a signature cannot be withdrawn, and a jti with no
+        // verified signature is just a string the caller made up.
+        Claims claims;
+        try {
+            claims = tokenProvider.parseRefreshToken(refreshTokenValue);
+        } catch (ExpiredJwtException e) {
+            throw new ApiException(ErrorCode.REFRESH_TOKEN_EXPIRED, "Refresh token has expired");
+        } catch (JwtException | IllegalArgumentException e) {
+            // Bad signature, tampered, wrong issuer, or an access token presented here.
+            throw new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Refresh token failed verification");
+        }
+
+        RefreshToken stored = refreshTokenRepository.findByTokenId(claims.getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Unknown refresh token"));
+
+        if (stored.isRevoked()) {
+            // Logged out, or already exchanged. Either way it is dead.
+            throw new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Refresh token has been revoked");
+        }
+        if (stored.isExpired()) {
+            // Belt and braces: the JWT expiry above should already have caught this.
+            throw new ApiException(ErrorCode.REFRESH_TOKEN_EXPIRED, "Refresh token has expired");
+        }
+
+        User user = userRepository.findById(stored.getUserId())
+                .orElseThrow(() -> new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Refresh token has no account"));
+
+        // Re-check account state on every refresh. This is the point where a lock or a disable
+        // applied after the access token was issued actually takes effect.
+        if (user.isLocked()) {
+            throw new ApiException(ErrorCode.ACCOUNT_LOCKED, "Refresh refused for a locked account");
+        }
+        if (!user.isEnabled()) {
+            throw new ApiException(ErrorCode.ACCOUNT_DISABLED, "Refresh refused for a disabled account");
+        }
+
+        // Rotation: one refresh token buys exactly one new pair. A stolen token is then usable only
+        // until the legitimate client refreshes, and the theft leaves a trace (the victim's next
+        // refresh fails) instead of granting indefinite quiet access.
+        stored.setRevoked(true);
+
+        log.info("Refresh token exchanged (userId={})", user.getId());
+        return issueTokens(user);
     }
 
-    private User loadUserWithDetails(String username) {
-        return userRepository.findByUsernameWithRolesAndPermissionsByUserId(Long.valueOf(username))
-                .orElseThrow(() -> {
-                    log.error("User not found during token refresh: {}", username);
-                    return new BadCredentialsException("User not found");
-                });
+    // ========================= logout =========================
+
+    @Override
+    @Transactional
+    public void logout(Long userId) {
+        int revoked = refreshTokenRepository.revokeAllByUserId(userId);
+
+        // Only the refresh side is revocable. The access token stays valid until it expires,
+        // because verifying it touches no storage - that is what "stateless" costs. Keep the
+        // access TTL short (15 minutes here); the README discusses the blacklist alternative.
+        log.info("Logout: revoked {} refresh token(s) (userId={})", revoked, userId);
     }
 
-    private AuthResponse buildAuthResponse(User user, TokenPair tokens) {
-        AuthResponse.UserInfo userInfo = new AuthResponse.UserInfo(
-                user.getUserId(),
-                user.getUsername(),
-                user.getEmail(),
-                user.getFullName()
-        );
+    // ========================= internals =========================
 
-        return new AuthResponse(
-                tokens.accessToken(),
-                tokens.refreshToken(),
-                jwtUtil.getAccessTtlSeconds(),
-                "Bearer",
-                userInfo
-        );
+    private AuthResponse issueTokens(User user) {
+        String accessToken = tokenProvider.generateAccessToken(user);
+        JwtTokenProvider.IssuedRefreshToken refreshToken = tokenProvider.generateRefreshToken(user);
+
+        // Only the jti is recorded. That is enough to revoke the token and not enough to use it.
+        refreshTokenRepository.save(RefreshToken.builder()
+                .userId(user.getId())
+                .tokenId(refreshToken.tokenId())
+                .expiresAt(refreshToken.expiresAt())
+                .revoked(false)
+                .build());
+
+        // No user object in the body: the caller already knows who it just authenticated as, the
+        // access token carries the id, email and role for anything that needs them, and GET
+        // /api/v1/me returns the profile on demand. Shipping it here as well means every login and
+        // every refresh copies account data into logs, proxies and client storage for no use.
+        return AuthResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken.token())
+                .tokenType("Bearer")
+                .expiresIn(tokenProvider.getAccessTtlSeconds())
+                .build();
     }
 
-    private UserResponse mapToUserResponse(User user) {
-        return new UserResponse(
-                user.getUserId(),
-                user.getUsername(),
-                user.getEmail(),
-                user.getFullName(),
-                user.getPhone(),
-                user.getStatus().name(),
-                user.getEmailVerified()
-        );
+    /**
+     * Emails are stored and compared lower-cased and trimmed, so {@code Jane@Example.com} is the
+     * same account as {@code jane@example.com} at signup, at login and at the unique index.
+     */
+    private String normaliseEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase();
     }
-
-    // Helper record for a token pair
-    private record TokenPair(String accessToken, String refreshToken) {}
 }

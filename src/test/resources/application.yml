@@ -1,0 +1,49 @@
+# Test configuration. This file shadows src/main/resources/application.yml on the
+# test classpath, so tests never touch a real database or a real secret.
+spring:
+  application:
+    name: spring-app-test
+  datasource:
+    url: jdbc:h2:mem:apptest;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+# Not a secret and not used by any deployment: a fixed 48-byte string so HS256
+# has a long enough key and the token tests are deterministic. The real value
+# comes from the JWT_SECRET environment variable and is not in this repository.
+jwt:
+  secret: "test-only-signing-key-do-not-deploy-0123456789abcdef"
+  issuer: spring-app
+  # Deliberately NOT the production defaults (5m / 8h). If a property name here or in
+  # JwtTokenProvider is misspelled, the default silently applies - and with matching values
+  # nothing would fail. AuthFlowIntegrationTest#configuredTtlsAreActuallyApplied asserts these
+  # exact numbers reach the response, so a typo breaks the build instead of hiding.
+  access-token-ttl: 2m
+  refresh-token-ttl: 3h
+
+app:
+  cors:
+    allowed-origins: "http://localhost:3000"
+    max-age: 3600
+  seed:
+    enabled: false
+
+logging:
+  level:
+    root: WARN
+    com.spring.app: INFO
+
+file:
+  server-path: ./build/test-uploads/
+  client-path: /api/v1/image
+  base-url: http://localhost:8088${file.client-path}

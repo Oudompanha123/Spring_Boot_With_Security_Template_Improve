@@ -1,15 +1,17 @@
 server:
-  port: 8088
+  port: ${SERVER_PORT:8088}
   forward-headers-strategy: framework
 
 spring:
   datasource:
     hikari:
       connection-timeout: 20000
-      maximum-pool-size: 5
-    url: jdbc:postgresql://localhost:5432/pos_sys_db
-    password: 1234
-    username: postgres
+      maximum-pool-size: 10
+    # No defaults: a production deployment that has not been given credentials
+    # should fail to start, not fall back to something guessable.
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
   servlet:
@@ -21,54 +23,38 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      # Schema changes belong in reviewed migrations, not in application startup.
+      ddl-auto: validate
     open-in-view: false
-    show-sql: false            # use logger instead
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
-        highlight_sql: true
-        #        dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           time_zone: UTC
 
-# JWT Configuration
-jwt:
-  key-id : "main-key"
-  public-key: "classpath:keys/public.pem"
-  private-key: "classpath:keys/private.pem"
-  access-ttl-seconds: 900
-  refresh-ttl-days: 7
-  issuer: "main-api"
-  audience: "clients"
-
-# CORS Configuration (needed for your SecurityConfig)
 app:
   cors:
-    allowed-origins: "http://localhost:3000,http://localhost:3001"
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
     max-age: 3600
+  seed:
+    enabled: false
 
 logging:
   level:
-    root: INFO
-    org.hibernate.SQL: DEBUG
-    org.hibernate.orm.jdbc.bind: TRACE     # <— Hibernate 6 bound params
-    org.hibernate.orm.jdbc.extract: INFO
-    com.spring.app: DEBUG
+    root: WARN
+    com.spring.app: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
 
-# Swagger/OpenAPI
 springdoc:
   swagger-ui:
-    path: /swagger-ui.html
-    enabled: true
+    # Interactive docs are a development tool. Serving them in production
+    # publishes the full shape of the API, including which endpoints exist.
+    enabled: ${SWAGGER_UI_ENABLED:false}
   api-docs:
-    path: /v3/api-docs
-    enabled: true
-  show-actuator: false
-  default-consumes-media-type: application/json
-  default-produces-media-type: application/json
+    enabled: ${SWAGGER_API_DOCS_ENABLED:false}
 
 file:
-  server-path: D:/upload-files/
+  server-path: ${FILE_SERVER_PATH:/var/lib/spring-app/uploads/}
   client-path: /api/v1/image
-  base-url: http://localhost:8088${file.client-path}
+  base-url: ${FILE_BASE_URL}${file.client-path}
