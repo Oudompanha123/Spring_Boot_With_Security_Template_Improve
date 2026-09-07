@@ -15,6 +15,11 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     /** Looked up by the {@code jti} carried in the presented refresh token. */
     Optional<RefreshToken> findByTokenId(String tokenId);
 
+    /** Rotation: spend the presented token as the next pair is issued. */
+    @Modifying
+    @Query("UPDATE RefreshToken rt SET rt.revoked = true WHERE rt.tokenId = :tokenId AND rt.revoked = false")
+    int revokeByTokenId(@Param("tokenId") String tokenId);
+
     /** Logout: revoke every live token of one user in a single statement. */
     @Modifying
     @Query("UPDATE RefreshToken rt SET rt.revoked = true WHERE rt.userId = :userId AND rt.revoked = false")

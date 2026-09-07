@@ -37,6 +37,11 @@ app:
     max-age: 3600
   seed:
     enabled: false
+  refresh-token-cleanup:
+    # "-" disables the schedule. RefreshTokenStoreIntegrationTest invokes the job directly, and a
+    # sweep firing on its own could delete an expired fixture between a test's setup and its
+    # assertion - a once-in-a-blue-moon failure at :00 and :30 that would be miserable to chase.
+    cron: "-"
 
 logging:
   level:

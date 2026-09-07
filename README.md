@@ -128,7 +128,7 @@ not in a README snippet.
 
 ```bash
 ./gradlew bootRun     # http://localhost:8088
-./gradlew test        # 97 tests
+./gradlew test        # 109 tests
 ./gradlew build
 ```
 
@@ -219,7 +219,8 @@ src/main/java/com/spring/app/
 ├── domain/
 │   ├── BaseEntity.java                # createdAt/updatedAt + createdBy/modifiedBy
 │   ├── user/       User, UserRepository
-│   ├── token/      RefreshToken, RefreshTokenRepository
+│   ├── token/      RefreshToken, RefreshTokenRepository,
+│   │                RefreshTokenStore (port), JpaRefreshTokenStore
 │   └── book/       Book, BookRepository
 │
 ├── enums/Role.java                    # USER, MANAGER, ADMIN
@@ -230,7 +231,7 @@ src/main/java/com/spring/app/
 │   └── book/  BookRequest, BookResponse
 │
 ├── service/
-│   ├── auth/  AuthService, AuthServiceImpl, LoginAttemptService
+│   ├── auth/  AuthService, AuthServiceImpl, LoginAttemptService, RefreshTokenCleanupJob
 │   └── book/  BookService, BookServiceImpl
 │
 ├── controller/
@@ -357,6 +358,25 @@ That resolves to `A005`, not `A004`, on purpose: `A004` tells a client to refres
 would not help a token that never had an expiry. Nothing here mints such a token — the point is
 that verification does not have to trust that, and would keep holding if another service signed
 with the same key, or if a library default changed.
+
+### Expired records are swept
+
+`RefreshTokenCleanupJob` deletes records that can no longer authenticate anything:
+
+```yaml
+app:
+  refresh-token-cleanup:
+    cron: "0 */30 * * * *"   # "-" disables it
+```
+
+This is not tidiness for its own sake. Rotation writes one record per refresh, and at a 5-minute
+access token an active client refreshes about twelve times an hour — roughly 96 records per user
+per working day, none of them ever read again once expired. A store with per-key TTLs would expire
+them for free; a table has to be swept.
+
+Expired records only. A revoked-but-unexpired record is left until its natural expiry, because it
+is the trail of a rotation and deleting it early erases the evidence that a token existed. Either
+way the client sees `A008`: an unknown `jti` and a revoked `jti` are the same answer.
 
 ### Changing the lifetimes
 
@@ -795,7 +815,7 @@ the API, including which endpoints exist.
 ./gradlew test
 ```
 
-97 tests against in-memory H2 (`src/test/resources/application.yml` shadows the main config, so
+109 tests against in-memory H2 (`src/test/resources/application.yml` shadows the main config, so
 tests never touch a real database or a real secret).
 
 | Suite | Covers |
@@ -807,6 +827,8 @@ tests never touch a real database or a real secret).
 | `ErrorCodeTest` (29) | message rendering, apostrophe survival, the `exception(...)` factory, internal-vs-client message, the templating allowlist, and one case per code asserting no `A0xx` message is templated |
 | `AuthenticationErrorCodesTest` (7) | the shared mapping: unknown account indistinguishable from a wrong password, lock/disable codes and statuses, provider failure as 500, unmodelled account states, null tolerated |
 | `CustomAuthenticationEntryPointTest` (6) | which code wins (attribute over exception), `A004` vs `A005`, `A006` status 403, no leak of `UsernameNotFoundException`, no timestamp in the body |
+| `AuthHelperTest` (5) | the static principal accessors: display name vs login identifier, every field read, and that an anonymous or foreign principal reads as absent instead of throwing |
+| `RefreshTokenStoreIntegrationTest` (7) | the storage port: issue/find, unknown jti, single and bulk revoke, expired-not-active, and that the cleanup job removes expired records while keeping live and revoked-but-live ones |
 | `SpringAppApplicationTests` (2) | context loads, and the suite really is on H2 (a guard against local override files outranking the test config) |
 
 ---
@@ -895,11 +917,21 @@ null, which is the honest answer rather than a fabricated `"system"` user.
 
 ### Not implemented, and what they would cost
 
-**Refresh tokens in Redis with a TTL instead of a table.** Redis expiry deletes the row for you, so
-there is no cleanup job, and the lookup leaves the primary database alone. It also adds a second
-piece of infrastructure that must be up for anyone to log in, and turns "who is signed in" into
-state you cannot join against your users in SQL. Worth it when refresh traffic is high enough to
-matter; not worth it at low volume.
+**Refresh tokens in Redis with a TTL instead of a table.** Not implemented, but the seam for it is:
+`RefreshTokenStore` is a port, `JpaRefreshTokenStore` is the implementation behind it, and
+`AuthServiceImpl` depends only on the interface — so a `RedisRefreshTokenStore` is a new class and a
+bean choice rather than surgery on the authentication flow. The port deliberately returns a record
+rather than a JPA entity, which is the return type a Redis store could not honestly produce.
+
+The trade-off, for whoever takes it on: Redis expiry deletes records for you, which removes the
+sweep below, and keeps refresh writes off the primary database. Against that, it is a second piece
+of infrastructure that must be up before anyone can log in, "who is signed in" stops being a SQL
+join, and — the one that actually decides the default here — **revocation stops being durable**.
+Revoking is a `DELETE`; under snapshotting or `appendfsync everysec` a crash can lose it, and a lost
+revocation brings a logged-out token back to life. Losing an *issue* only forces a re-login; losing
+a *revoke* is a security failure. `appendfsync always` fixes it and costs the latency Redis was
+chosen for, so the honest high-scale answer is a hybrid: Redis for the lookup, the table for the
+durable record of revocations.
 
 **A blacklist so logout invalidates the access token too — and the trade-off against statelessness.**
 Right now logout revokes refresh tokens; the access token stays valid for up to 5 minutes. Closing
@@ -938,10 +970,9 @@ becomes relevant again — hence re-enabling it for exactly that path, and only 
 - **No monitoring or alerting** on the signals that matter — lockouts, `A005` bursts, refresh reuse.
 - **No email verification or password reset.** `enabled` exists; nothing sets it to false.
 - **No schema migrations.** `ddl-auto: update` in dev, `validate` in prod, and nothing in between.
-- **No refresh-token cleanup job.** `deleteExpiredBefore` exists on the repository; nothing calls
-  it. This matters more at a 5-minute access TTL than it looks: rotation writes one row per
-  refresh, so an active user leaves ~96 dead rows per 8-hour session. A `@Scheduled` sweep of
-  expired rows is a handful of lines and should be the first thing added.
+- **The cleanup job is not cluster-aware.** Every instance runs its own sweep. Harmless (the delete
+  is idempotent) but wasteful; a lock or a leader-election profile is the fix when there is more
+  than one instance.
 - **No security review.** None of the above has been through one.
 
 ---

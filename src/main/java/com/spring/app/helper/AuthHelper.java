@@ -41,6 +41,20 @@ public final class AuthHelper {
         return currentPrincipal().map(CustomUserDetails::getEmail);
     }
 
+    /**
+     * The current user's display name — {@code User.username}.
+     *
+     * <p>Not the login identifier, and not {@code UserDetails.getUsername()}: Spring Security
+     * requires that method to return whatever the {@code UserDetailsService} loads by, which here
+     * is the email, so {@link CustomUserDetails#getUsername()} and
+     * {@link CustomUserDetails#getEmail()} are the same string. This returns the human-facing name
+     * instead, which is what a caller asking for "the username" almost always wants; for the
+     * identifier, use {@link #currentEmail()}.
+     */
+    public static Optional<String> currentUsername() {
+        return currentPrincipal().map(CustomUserDetails::getDisplayName);
+    }
+
     public static Optional<Role> currentRole() {
         return currentPrincipal().map(CustomUserDetails::getRole);
     }

@@ -33,3 +33,10 @@ jwt:
   # one still buys new access tokens until someone notices. Rotation on every exchange means a
   # theft is at least visible - the victim's next refresh fails.
   refresh-token-ttl: 8h
+
+app:
+  refresh-token-cleanup:
+    # Rotation writes one refresh-token record per exchange and nothing reads an expired one
+    # again, so a table-backed store needs sweeping. Cadence only has to keep growth bounded.
+    # Set to "-" to disable the schedule entirely.
+    cron: "0 */30 * * * *"

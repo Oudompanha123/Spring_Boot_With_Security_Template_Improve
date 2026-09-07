@@ -1,7 +1,6 @@
 package com.spring.app.service.auth;
 
-import com.spring.app.domain.token.RefreshToken;
-import com.spring.app.domain.token.RefreshTokenRepository;
+import com.spring.app.domain.token.RefreshTokenStore;
 import com.spring.app.domain.user.User;
 import com.spring.app.domain.user.UserRepository;
 import com.spring.app.enums.Role;
@@ -43,7 +42,7 @@ public class AuthServiceImpl implements AuthService {
     private final AuthenticationManager authenticationManager;
     private final LoginAttemptService loginAttemptService;
     private final UserRepository userRepository;
-    private final RefreshTokenRepository refreshTokenRepository;
+    private final RefreshTokenStore refreshTokenStore;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
 
@@ -143,10 +142,10 @@ public class AuthServiceImpl implements AuthService {
             throw new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Refresh token failed verification");
         }
 
-        RefreshToken stored = refreshTokenRepository.findByTokenId(claims.getId())
+        RefreshTokenStore.StoredRefreshToken stored = refreshTokenStore.find(claims.getId())
                 .orElseThrow(() -> new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Unknown refresh token"));
 
-        if (stored.isRevoked()) {
+        if (stored.revoked()) {
             // Logged out, or already exchanged. Either way it is dead.
             throw new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Refresh token has been revoked");
         }
@@ -155,7 +154,7 @@ public class AuthServiceImpl implements AuthService {
             throw new ApiException(ErrorCode.REFRESH_TOKEN_EXPIRED, "Refresh token has expired");
         }
 
-        User user = userRepository.findById(stored.getUserId())
+        User user = userRepository.findById(stored.userId())
                 .orElseThrow(() -> new ApiException(ErrorCode.REFRESH_TOKEN_INVALID, "Refresh token has no account"));
 
         // Re-check account state on every refresh. This is the point where a lock or a disable
@@ -170,7 +169,7 @@ public class AuthServiceImpl implements AuthService {
         // Rotation: one refresh token buys exactly one new pair. A stolen token is then usable only
         // until the legitimate client refreshes, and the theft leaves a trace (the victim's next
         // refresh fails) instead of granting indefinite quiet access.
-        stored.setRevoked(true);
+        refreshTokenStore.revoke(stored.tokenId());
 
         log.info("Refresh token exchanged (userId={})", user.getId());
         return issueTokens(user);
@@ -181,7 +180,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void logout(Long userId) {
-        int revoked = refreshTokenRepository.revokeAllByUserId(userId);
+        int revoked = refreshTokenStore.revokeAllFor(userId);
 
         // Only the refresh side is revocable. The access token stays valid until it expires,
         // because verifying it touches no storage - that is what "stateless" costs. Keep the
@@ -196,12 +195,7 @@ public class AuthServiceImpl implements AuthService {
         JwtTokenProvider.IssuedRefreshToken refreshToken = tokenProvider.generateRefreshToken(user);
 
         // Only the jti is recorded. That is enough to revoke the token and not enough to use it.
-        refreshTokenRepository.save(RefreshToken.builder()
-                .userId(user.getId())
-                .tokenId(refreshToken.tokenId())
-                .expiresAt(refreshToken.expiresAt())
-                .revoked(false)
-                .build());
+        refreshTokenStore.issue(user.getId(), refreshToken.tokenId(), refreshToken.expiresAt());
 
         // No user object in the body: the caller already knows who it just authenticated as, the
         // access token carries the id, email and role for anything that needs them, and GET
