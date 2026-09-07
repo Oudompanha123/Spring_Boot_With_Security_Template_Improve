@@ -1,0 +1,15 @@
+# Keep the build context small and, more importantly, keep local secrets and
+# host-specific state out of the image entirely.
+config/
+.git/
+.gradle/
+build/
+bin/
+out/
+.idea/
+.vscode/
+.github/
+*.iml
+*.log
+README.md
+HELP.md

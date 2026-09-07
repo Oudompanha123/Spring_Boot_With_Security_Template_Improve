@@ -1,5 +1,7 @@
 server:
-  port: ${SERVER_PORT:8088}
+  # PORT is what Render (and most PaaS) inject and expect the process to bind. SERVER_PORT
+  # stays as a fallback so a plain `java -jar` deployment behaves as before.
+  port: ${PORT:${SERVER_PORT:8088}}
   forward-headers-strategy: framework
 
 spring:
@@ -7,9 +9,13 @@ spring:
     hikari:
       connection-timeout: 20000
       maximum-pool-size: 10
-    # No defaults: a production deployment that has not been given credentials
+    # No credential defaults: a production deployment that has not been given credentials
     # should fail to start, not fall back to something guessable.
-    url: ${DB_URL}
+    #
+    # DB_URL wins when set. Otherwise the JDBC URL is composed from the parts a managed
+    # database exposes - Render, RDS and friends publish host/port/name separately, and the
+    # "connection string" they provide is a postgres:// URI that the JDBC driver will not accept.
+    url: ${DB_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
@@ -38,6 +44,19 @@ app:
     max-age: 3600
   seed:
     enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health only. The other actuator endpoints describe the innards of the process
+        # (env, beans, mappings, heap dumps) and have no business being reachable.
+        include: health
+  endpoint:
+    health:
+      # Liveness, not a status page: "UP" without naming the components behind it.
+      show-details: never
+      show-components: never
 
 logging:
   level:

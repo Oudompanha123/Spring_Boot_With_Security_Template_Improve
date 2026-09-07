@@ -19,11 +19,13 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.ErrorResponseException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -225,6 +227,60 @@ public class GlobalApiExceptionHandler {
     @ExceptionHandler(NoHandlerFoundException.class)
     public ResponseEntity<ErrorResponse> handleNoHandler(NoHandlerFoundException e, HttpServletRequest request) {
         return build(ErrorCode.RESOURCE_NOT_FOUND, request);
+    }
+
+    /**
+     * A request for a static resource that is not there.
+     *
+     * <p>Handled by its concrete type because it does not extend
+     * {@link ErrorResponseException}: like {@link NoHandlerFoundException}, it extends
+     * {@code ServletException} and merely <em>implements</em> Spring's {@code ErrorResponse}
+     * interface, which an {@code @ExceptionHandler} cannot target (the interface is not a
+     * {@code Throwable}).
+     *
+     * <p>Worth having: Spring Boot maps unmatched paths to the static-resource handler, so this
+     * fires both for a missing file under {@code /api/v1/image/**} and for any unmapped URL. Left
+     * to the catch-all it came back as {@code 500 S001} — a client mistake reported as a server
+     * failure, logged at ERROR alongside real ones.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResource(NoResourceFoundException e, HttpServletRequest request) {
+        log.warn("No such resource: {} {}", request.getMethod(), request.getRequestURI());
+        return build(ErrorCode.RESOURCE_NOT_FOUND, request);
+    }
+
+    /**
+     * Framework exceptions that already carry the status they mean.
+     *
+     * <p>Without this they fall through to {@link #handleUnexpected}, and a request for a static
+     * resource that does not exist — a missing image under {@code /api/v1/image/**}, or
+     * {@code /swagger-ui.html} when the docs are switched off — is answered with
+     * {@code 500 S001} instead of a 404. The catch-all is a backstop for bugs, and a
+     * {@code NoResourceFoundException} is not a bug; letting it reach the catch-all reports a
+     * client mistake as a server failure and buries a real 500 in the same log line.
+     *
+     * <p>The status comes from the exception, and the code from the status. The more specific
+     * handlers above (validation, method, media type) still win for the cases they name.
+     */
+    @ExceptionHandler(ErrorResponseException.class)
+    public ResponseEntity<ErrorResponse> handleFrameworkError(ErrorResponseException e, HttpServletRequest request) {
+        int status = e.getStatusCode().value();
+        ErrorCode code = switch (status) {
+            case 404 -> ErrorCode.RESOURCE_NOT_FOUND;
+            case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
+            case 413 -> ErrorCode.PAYLOAD_TOO_LARGE;
+            case 415 -> ErrorCode.UNSUPPORTED_MEDIA_TYPE;
+            case 409 -> ErrorCode.RESOURCE_CONFLICT;
+            default -> status >= 500 ? ErrorCode.INTERNAL_ERROR : ErrorCode.MALFORMED_REQUEST;
+        };
+
+        if (code == ErrorCode.INTERNAL_ERROR) {
+            log.error("Framework error {} on {} {}", status, request.getMethod(), request.getRequestURI(), e);
+        } else {
+            log.warn("Framework error {} [{}] on {} {}",
+                    status, code.getCode(), request.getMethod(), request.getRequestURI());
+        }
+        return build(code, request);
     }
 
     // ========================= persistence and fallback =========================

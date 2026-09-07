@@ -96,6 +96,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, PUBLIC_AUTH_ENDPOINTS).permitAll()
                         .requestMatchers(SWAGGER_ENDPOINTS).permitAll()
                         .requestMatchers("/error").permitAll()
+                        // Liveness probe for the hosting platform, which cannot authenticate.
+                        // Only this one actuator path is open, and it reports "UP" with no
+                        // component detail (see the management block in application-prod.yml) -
+                        // a probe should not double as a public inventory of the internals.
+                        .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/image/**", "/favicon.ico").permitAll()
 
                         // ----- books: the authorization matrix -----

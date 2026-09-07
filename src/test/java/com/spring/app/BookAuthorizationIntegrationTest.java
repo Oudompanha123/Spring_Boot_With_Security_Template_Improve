@@ -218,6 +218,28 @@ class BookAuthorizationIntegrationTest {
                 .andExpect(jsonPath("$.code").value("A002"));
     }
 
+    @Test
+    @DisplayName("a missing static resource is 404, not 500")
+    void missingStaticResourceIsNotFound() throws Exception {
+        // /api/v1/image/** is a public static-resource path. A request for a file that is not
+        // there throws NoResourceFoundException, which already means 404 - it must not fall
+        // through to the catch-all and be reported as a server failure.
+        mockMvc.perform(get("/api/v1/image/does-not-exist.png"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("C005"))
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    @DisplayName("an unmapped path under the API is 404 JSON, not an HTML error page")
+    void unmappedPathIsJsonNotFound() throws Exception {
+        mockMvc.perform(get("/api/v1/books/9999/nonexistent-subresource")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+    }
+
     private String tokenFor(String email, Role role) {
         User user = userRepository.save(User.builder()
                 .email(email)
