@@ -128,7 +128,7 @@ not in a README snippet.
 ### 3. Run
 
 ```bash
-./gradlew bootRun     # http://localhost:8088
+./gradlew bootRun     # http://localhost:8088, Postgres
 ./gradlew test        # 111 tests
 ./gradlew build
 ```
@@ -145,6 +145,36 @@ somewhere else:
 
 Development conveniences only. Override `app.seed.*-password`, or turn the seeder off, anywhere that
 matters.
+
+### Running without Postgres (the `h2` profile)
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=h2'
+```
+
+No database to install and no `JWT_SECRET` to set. Same three seeded accounts, same API, same rules
+— only the datasource differs.
+
+| | |
+|---|---|
+| Database | `jdbc:h2:file:./data/h2/appdb` — **file-backed**, so signups survive a restart. Delete `./data` to start clean. |
+| Console | <http://localhost:8088/h2-console> (JDBC URL is pre-filled, user `sa`, no password) |
+| Swagger | <http://localhost:8088/swagger-ui.html> |
+| Signing key | a fixed, clearly-labelled local value; `JWT_SECRET` still overrides it |
+
+Three things keep this from becoming a liability anywhere else:
+
+- **H2 is a `developmentOnly` dependency.** It is on the `bootRun` classpath and excluded from
+  `bootJar`, so the deployed image has no H2 and no console to serve.
+- **`H2ConsoleSecurityConfig` is `@Profile("h2")`.** The console needs unauthenticated access,
+  framing and CSRF-free POSTs — all things the API refuses. Putting them in their own profiled
+  filter chain means they do not exist under `dev` or `prod`, rather than being contained by a path
+  matcher someone could get wrong. A console open on a public URL exposes the schema, every row and
+  arbitrary SQL, with no login.
+- **`web-allow-others: false`** — the console answers on localhost only, not the network.
+
+The API itself is unchanged: `X-Frame-Options: SAMEORIGIN` applies to `/h2-console/**` alone, and a
+tokenless `POST /api/v1/books` still returns `401 A001`.
 
 ---
 
@@ -894,6 +924,17 @@ describing one web service plus a managed Postgres).
 
 1. Push this repository to GitHub.
 2. In Render: **New → Blueprint**, point it at the repo.
+
+   > **It must be Blueprint, not Web Service.** Render applies `render.yaml` only to
+   > Blueprint-managed services. Create the service as a plain Web Service and the file is
+   > ignored entirely: no environment variables are set, `generateValue: true` never runs, and the
+   > first deploy dies with *"No JWT signing secret is configured"* after a perfectly successful
+   > image build. If you already have a Web Service, either recreate it as a Blueprint or set every
+   > variable listed in `render.yaml` by hand under the service's Environment tab.
+   >
+   > When setting them by hand, use `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` /
+   > `DB_PASSWORD` from the database's Info page. Render's "Internal Database URL" is a
+   > `postgres://` URI and the JDBC driver rejects it, so it cannot go into `DB_URL` as-is.
 3. Render asks for the two values marked `sync: false`:
    - `CORS_ALLOWED_ORIGINS` — your frontend's exact origins, comma separated. Not `*`: this API
      sends credentials, and allowing every origin with credentials makes a token readable by any

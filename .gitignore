@@ -38,3 +38,6 @@ out/
 
 ### Local secrets - never commit ###
 /config/
+
+### Local H2 database and uploads ###
+/data/

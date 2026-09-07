@@ -22,19 +22,24 @@ public class JwtSecretFailureAnalyzer extends AbstractFailureAnalyzer<JwtSecretC
     @Override
     protected FailureAnalysis analyze(Throwable rootFailure, JwtSecretConfigurationException cause) {
         String action = """
-                Set a signing secret of at least 32 bytes, then start again. Either:
+                Set JWT_SECRET to at least 32 bytes of random data, then start again.
 
-                  1. Export it (Git Bash / Linux / macOS):
-                       export JWT_SECRET="$(openssl rand -base64 48)"
+                  Deployed (Render, Fly, Docker, Kubernetes, systemd):
+                    Set JWT_SECRET in the platform's environment settings - not in a file inside
+                    the image. On Render that is the service's Environment tab, or an envVar in
+                    render.yaml with `generateValue: true` if the service is Blueprint-managed.
+                    Note that render.yaml is only applied to Blueprint-managed services; a service
+                    created as a plain Web Service ignores it, which is the usual reason this
+                    message appears on a first deploy.
 
-                     PowerShell:
-                       $env:JWT_SECRET = [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Max 256 }))
+                  Local shell:
+                    export JWT_SECRET="$(openssl rand -base64 48)"                     # bash
+                    $env:JWT_SECRET = [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Max 256 }))   # PowerShell
 
-                  2. Or put it in ./config/application.yml, which Spring Boot reads automatically
-                     and which is git-ignored:
-
-                       jwt:
-                         secret: "<your random value>"
+                  Local file (development only, git-ignored, never in the image):
+                    ./config/application-dev.yml
+                      jwt:
+                        secret: "<your random value>"
 
                 There is deliberately no built-in default. A signing key committed to this
                 repository would let anyone who can read the repository mint valid tokens for

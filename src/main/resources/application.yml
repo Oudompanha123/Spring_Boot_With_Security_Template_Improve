@@ -2,7 +2,7 @@ spring:
   application:
     name: spring-app
   profiles:
-    active: dev
+    active: h2
 
 # ---------------------------------------------------------------------------
 # JWT

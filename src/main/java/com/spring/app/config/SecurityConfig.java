@@ -55,7 +55,13 @@ public class SecurityConfig {
     @Value("${app.cors.max-age:3600}")
     private Long corsMaxAge;
 
-    /** Endpoints that must work with no token at all. */
+    /**
+     * Endpoints that must work with no token at all.
+     *
+     * <p>Only ever POST endpoints — the matcher below pairs this array with {@code HttpMethod.POST},
+     * so a GET path added here is silently not permitted and answers {@code A001}. Anything that
+     * needs to be reachable by a browser belongs in its own matcher with its own method.
+     */
     private static final String[] PUBLIC_AUTH_ENDPOINTS = {
             "/api/v1/auth/signup",
             "/api/v1/auth/login",

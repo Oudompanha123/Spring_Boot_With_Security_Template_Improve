@@ -52,6 +52,10 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation "io.jsonwebtoken:jjwt-impl:${jjwtVersion}"
+    // H2 for local runs under the `h2` profile. `developmentOnly` keeps it on the bootRun
+    // classpath while excluding it from bootJar, so an in-memory database engine is never
+    // shipped inside the deployed image.
+    developmentOnly 'com.h2database:h2'
     testRuntimeOnly 'com.h2database:h2'
 }
 
