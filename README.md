@@ -176,6 +176,26 @@ Three things keep this from becoming a liability anywhere else:
 The API itself is unchanged: `X-Frame-Options: SAMEORIGIN` applies to `/h2-console/**` alone, and a
 tokenless `POST /api/v1/books` still returns `401 A001`.
 
+#### Hosting with the `h2` profile
+
+Possible, and the four settings below are not optional. The profile's defaults are written for a
+laptop, and every one of them is wrong on a public URL.
+
+| Variable | Value | Why it is required |
+|---|---|---|
+| `SPRING_PROFILES_ACTIVE` | `h2` | otherwise `dev` runs and demands Postgres |
+| `JWT_SECRET` | 48 random chars | the profile carries a **public** fallback key. Leave it and anyone reading this repository can mint an ADMIN token for your instance |
+| `SPRING_H2_CONSOLE_ENABLED` | `false` | otherwise an unauthenticated SQL console is on your public URL |
+| `APP_SEED_ENABLED` | `false` | otherwise `admin@example.com` / `Admin12345` exists as a real ADMIN, with the password written in this README |
+| `PORT` | injected by the host | |
+| `APP_CORS_ALLOWED_ORIGINS` | your frontend origin | default is localhost |
+| `FILE_BASE_URL` | your public URL | default is localhost |
+
+And the constraint that usually decides it: **an H2 file lives in the container.** Every deploy and
+every restart destroys it — accounts, books, refresh tokens. It also cannot scale past one
+instance, because the file is locked by a single process. Point `SPRING_DATASOURCE_URL` at a
+mounted disk to survive restarts, or use the managed Postgres the `prod` profile is built for.
+
 ---
 
 ## 🔄 Request flow

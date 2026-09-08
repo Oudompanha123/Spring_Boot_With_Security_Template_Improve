@@ -3,20 +3,44 @@
 #
 #   ./gradlew bootRun --args='--spring.profiles.active=h2'
 #
-# Local development only. H2 is a `developmentOnly` dependency, so it is not in
-# the deployed jar and this profile cannot be activated in the image.
+# H2 is a `runtimeOnly` dependency, so it is inside the deployed jar and this
+# profile CAN be activated on a host. The defaults below are written for a
+# laptop, which means every one of them is wrong on a public URL. Hosting with
+# this profile requires all four of:
+#
+#   SPRING_PROFILES_ACTIVE=h2
+#   JWT_SECRET=<48 random chars>     # the fallback below is public
+#   SPRING_H2_CONSOLE_ENABLED=false  # else an open SQL console
+#   APP_SEED_ENABLED=false           # else a known-password ADMIN account
+#
+# And the constraint that usually decides against it: an H2 file lives in the
+# container, so every deploy and restart destroys the data, and the file lock
+# means it cannot scale past one instance.
 # ---------------------------------------------------------------------------
 server:
-  port: 8088
+  # PORT is what a hosting platform injects and expects the process to bind.
+  # Hardcoding 8088 makes this profile unusable on a host: the app comes up on
+  # the wrong port and the platform reports "no open ports detected".
+  port: ${PORT:8088}
   forward-headers-strategy: framework
 
 spring:
   datasource:
     # File-backed rather than jdbc:h2:mem, so the seeded accounts and anything
     # you sign up survive a restart. Delete ./data to start clean.
+    #
+    # The path is relative to the working directory, so on a container this
+    # lives inside the container and dies with it. Point SPRING_DATASOURCE_URL
+    # at a mounted disk to keep the data.
+    #
     # MODE=PostgreSQL keeps the SQL dialect close to the real target, so schema
     # behaviour here is a reasonable rehearsal for Postgres.
-    url: jdbc:h2:file:./data/h2/appdb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;AUTO_SERVER=TRUE
+    #
+    # AUTO_SERVER is deliberately absent: it opens a TCP listener so a second
+    # process can attach, which is handy on a laptop and an unnecessary open
+    # port on a host. Append ;AUTO_SERVER=TRUE locally if you want DataGrip
+    # attached while the app is running.
+    url: jdbc:h2:file:./data/h2/appdb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -24,10 +48,15 @@ spring:
   h2:
     console:
       # http://localhost:8088/h2-console
-      # Reachable without a token, and only because this profile exists solely
-      # for a laptop - H2ConsoleSecurityConfig is @Profile("h2") and so does not
-      # exist under dev or prod. A database console on a public URL would expose
-      # the schema, the data and arbitrary SQL with no login at all.
+      #
+      # Reachable without a token, which is acceptable only on a laptop. Set
+      # SPRING_H2_CONSOLE_ENABLED=false on anything hosted: a console on a
+      # public URL exposes the schema, every row and arbitrary SQL with no
+      # login at all.
+      #
+      # H2ConsoleSecurityConfig is @Profile("h2") AND conditional on this
+      # property, so switching the console off also removes its permissive
+      # filter chain rather than leaving a permitAll matcher behind.
       enabled: true
       path: /h2-console
       settings:
@@ -48,17 +77,26 @@ spring:
           time_zone: UTC
 
 jwt:
-  # A known key, and deliberately so: this profile is a throwaway local database,
-  # and requiring a secret would defeat the point of a zero-setup run. JWT_SECRET
-  # still wins when set. Nothing signed here is worth anything anywhere else, and
-  # the string says so.
+  # A known key, and deliberately so: this profile is a throwaway local
+  # database, and requiring a secret would defeat the point of a zero-setup
+  # run. The string says what it is.
+  #
+  # JWT_SECRET still wins when set, and on anything hosted it MUST be set.
+  # Leave this fallback in place on a public instance and anyone who can read
+  # this repository can sign a token claiming role ADMIN for your deployment.
   secret: ${JWT_SECRET:h2-profile-local-development-only-not-a-real-secret}
 
 app:
   cors:
+    # Override with APP_CORS_ALLOWED_ORIGINS when hosted. Never "*": this API
+    # sends credentials, and allowing every origin with credentials makes a
+    # token readable by any site the user visits.
     allowed-origins: "http://localhost:3000,http://localhost:5173"
     max-age: 3600
   seed:
+    # Creates admin/manager/user with the passwords documented in the README.
+    # Set APP_SEED_ENABLED=false when hosted, or that ADMIN account is real and
+    # its password is published.
     enabled: true
   refresh-token-cleanup:
     cron: "0 */30 * * * *"
@@ -81,6 +119,6 @@ springdoc:
     enabled: true
 
 file:
-  server-path: ./data/uploads/
+  server-path: ${FILE_SERVER_PATH:./data/uploads/}
   client-path: /api/v1/image
-  base-url: http://localhost:8088${file.client-path}
+  base-url: ${FILE_BASE_URL:http://localhost:8088}${file.client-path}

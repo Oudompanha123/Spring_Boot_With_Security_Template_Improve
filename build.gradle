@@ -52,10 +52,11 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation "io.jsonwebtoken:jjwt-impl:${jjwtVersion}"
-    // H2 for local runs under the `h2` profile. `developmentOnly` keeps it on the bootRun
-    // classpath while excluding it from bootJar, so an in-memory database engine is never
-    // shipped inside the deployed image.
-    developmentOnly 'com.h2database:h2'
+    // H2 for the `h2` profile. `runtimeOnly` rather than `developmentOnly` because that profile
+    // is also used on a host: developmentOnly is excluded from bootJar, so the deployed image had
+    // no org.h2.Driver and SPRING_PROFILES_ACTIVE=h2 failed at startup. The cost is ~2.5MB of
+    // driver in every image, including Postgres deployments that never load it.
+    runtimeOnly 'com.h2database:h2'
     testRuntimeOnly 'com.h2database:h2'
 }
 
