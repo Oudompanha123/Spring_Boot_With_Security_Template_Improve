@@ -2,7 +2,10 @@ spring:
   application:
     name: spring-app
   profiles:
-    active: h2
+    # dev = Postgres (credentials from ./config/application-dev.yml or DB_* env vars)
+    # h2  = zero-setup local file database:
+    #         ./gradlew bootRun --args='--spring.profiles.active=h2'
+    active: dev
 
 # ---------------------------------------------------------------------------
 # JWT

@@ -15,7 +15,11 @@ spring:
     # DB_URL wins when set. Otherwise the JDBC URL is composed from the parts a managed
     # database exposes - Render, RDS and friends publish host/port/name separately, and the
     # "connection string" they provide is a postgres:// URI that the JDBC driver will not accept.
-    url: ${DB_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}
+    # sslmode defaults to `require` because every managed Postgres worth using
+    # rejects unencrypted connections, and the JDBC driver does not negotiate TLS
+    # on its own - the failure then looks like bad credentials rather than a
+    # missing parameter. Set DB_SSLMODE=disable only for a local server.
+    url: ${DB_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}?sslmode=${DB_SSLMODE:require}}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver

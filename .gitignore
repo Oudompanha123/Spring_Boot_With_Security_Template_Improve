@@ -41,3 +41,7 @@ out/
 
 ### Local H2 database and uploads ###
 /data/
+
+### JVM crash artifacts ###
+hs_err_pid*.log
+replay_pid*.log
