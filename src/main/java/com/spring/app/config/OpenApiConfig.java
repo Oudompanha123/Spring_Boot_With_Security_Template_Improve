@@ -5,12 +5,8 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityScheme;
-import io.swagger.v3.oas.models.servers.Server;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.List;
 
 /**
  * OpenAPI document and the Swagger UI Authorize button.
@@ -23,12 +19,24 @@ import java.util.List;
  * <p>The requirement is applied per operation with {@code @SecurityRequirement} rather than
  * globally, so the document tells the truth about which endpoints are public. A global requirement
  * would make {@code GET /api/v1/books} and login look as if they need a token.
+ *
+ * <h2>No servers list, on purpose</h2>
+ *
+ * This used to pin {@code servers} to {@code http://localhost:${server.port}}. That is correct
+ * exactly once - on the machine that built it - and wrong everywhere else. Deployed behind HTTPS,
+ * Swagger UI read that block and sent every "Try it out" to the browser's own localhost over plain
+ * http from an https page: wrong host, mixed content and a cross-origin request in one go,
+ * surfacing as "Failed to fetch" and "URL scheme must be http or https for CORS request" - which
+ * sends you looking at CORS, where the problem is not.
+ *
+ * <p>With no servers list, springdoc derives the URL from the incoming request. Combined with
+ * {@code forward-headers-strategy: framework}, which makes Spring trust the proxy's
+ * {@code X-Forwarded-Proto} and {@code X-Forwarded-Host}, the document describes whatever host it
+ * was actually fetched from - localhost in development, the public HTTPS URL in a deployment - and
+ * requests stay same-origin, so CORS never enters into it.
  */
 @Configuration
 public class OpenApiConfig {
-
-    @Value("${server.port:8088}")
-    private String serverPort;
 
     @Bean
     public OpenAPI openAPI() {
@@ -65,11 +73,6 @@ public class OpenApiConfig {
                                 .name("Soeuk Sophanit")
                                 .url("https://github.com/soeuksophanit"))
                 )
-                .servers(List.of(
-                        new Server()
-                                .url("http://localhost:" + serverPort)
-                                .description("Development server")
-                ))
                 .components(new Components()
                         .addSecuritySchemes("bearerAuth", bearerAuthScheme()));
     }
