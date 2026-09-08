@@ -32,11 +32,28 @@ WORKDIR /app
 
 # Unprivileged: a process that only needs to read its own jar has no reason to
 # be able to write to the image.
+#
+# /app/data is created and handed to that user because the `h2` profile keeps a
+# file database at ./data/h2/appdb, relative to the working directory, and
+# file.server-path writes uploads to ./data/uploads. Without this, a non-root
+# process cannot create either path inside a root-owned WORKDIR: H2 fails to
+# open the database, Hibernate then has no connection to read metadata from, and
+# the whole thing surfaces as the misleading "Unable to determine Dialect
+# without JDBC metadata" rather than a permission error.
+#
+# It costs nothing under the Postgres profiles, which never touch the directory.
 RUN groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --no-create-home app
+    && useradd --system --uid 10001 --gid app --no-create-home app \
+    && mkdir -p /app/data
 
-COPY --from=build /workspace/app.jar app.jar
+COPY --from=build --chown=10001:app /workspace/app.jar app.jar
+RUN chown -R 10001:app /app
 USER 10001
+
+# The data directory is container-local: recreated on every deploy and every
+# restart, so anything written there is lost. Mount a volume here, or point
+# SPRING_DATASOURCE_URL at a mounted path, if the data has to survive.
+VOLUME ["/app/data"]
 
 ENV SPRING_PROFILES_ACTIVE=prod
 

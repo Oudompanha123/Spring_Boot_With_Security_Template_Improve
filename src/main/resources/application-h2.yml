@@ -84,7 +84,8 @@ jwt:
   # JWT_SECRET still wins when set, and on anything hosted it MUST be set.
   # Leave this fallback in place on a public instance and anyone who can read
   # this repository can sign a token claiming role ADMIN for your deployment.
-  secret: dB4Xq5J73C/LJu0QRMt/qrM5A5DTlR90Ejs6qWEiAK0Zpi1qDpAnUYbH+lQSQ3zf
+  secret: ${JWT_SECRET:h2-profile-local-development-only-not-a-real-secret}
+
 app:
   cors:
     # Override with APP_CORS_ALLOWED_ORIGINS when hosted. Never "*": this API
