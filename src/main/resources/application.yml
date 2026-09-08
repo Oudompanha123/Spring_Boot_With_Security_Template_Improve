@@ -5,7 +5,7 @@ spring:
     # dev = Postgres (credentials from ./config/application-dev.yml or DB_* env vars)
     # h2  = zero-setup local file database:
     #         ./gradlew bootRun --args='--spring.profiles.active=h2'
-    active: dev
+    active: prod
 
 # ---------------------------------------------------------------------------
 # JWT
@@ -27,7 +27,7 @@ spring:
 # or in ./config/application.yml, which is git-ignored and read automatically.
 # ---------------------------------------------------------------------------
 jwt:
-  secret: ${JWT_SECRET:}
+  secret: ${JWT_SECRET:WT_SECRET=7f4c9a2e8b1d6f305c7e9a42b6d1f8c3a5e7b9d204f6c8a1e3d7b5f9c2a6e8d1}
   issuer: spring-app
   # Access tokens are short-lived because nothing can revoke one: until it expires it is
   # valid wherever it is presented, so its lifetime IS the window an attacker gets.

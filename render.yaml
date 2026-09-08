@@ -1,19 +1,13 @@
 # Render blueprint: one web service plus a managed Postgres.
 #
 # Deploy: push this file, then in Render choose New -> Blueprint and point it at
-# the repository. Render will ask for the two values marked `sync: false` and
+# the repository. Render will ask for the four values marked `sync: false` and
 # generate JWT_SECRET itself.
 #
 # Everything the prod profile requires is set here. That profile deliberately
 # has no fallbacks for credentials, so a missing variable is a failed startup
 # rather than a service running on a guessable default - which means this file
 # has to be complete.
-
-databases:
-  - name: spring-app-db
-    databaseName: spring_app
-    user: spring_app
-    plan: free
 
 services:
   - type: web
@@ -33,41 +27,22 @@ services:
       - key: JWT_SECRET
         generateValue: true
 
-      # A managed database publishes its parts separately. Note that Render's
-      # `connectionString` is a postgres:// URI, which the JDBC driver will not
-      # accept - hence host/port/database rather than the connection string, and
-      # application-prod.yml composes the jdbc: URL from them.
-      - key: DB_HOST
-        fromDatabase:
-          name: spring-app-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: spring-app-db
-          property: port
-      - key: DB_NAME
-        fromDatabase:
-          name: spring-app-db
-          property: database
-      - key: DB_USERNAME
-        fromDatabase:
-          name: spring-app-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: spring-app-db
-          property: password
-
-      # The prod profile sets ddl-auto=validate, which fails against an empty
-      # database because there is nothing to validate. `update` lets the first
-      # deploy create the schema.
+      # The database is Aiven, not a Render resource, so there is nothing to wire
+      # `fromDatabase` to. Host, port and database name are defaulted in
+      # application-prod.yml - they are addresses, not secrets.
       #
-      # This is a bootstrap convenience, not a way to run a service. Hibernate
-      # will add columns and never remove or alter them, so the schema quietly
-      # diverges from the entities and no change is ever reviewed. Introduce
-      # Flyway and set this back to `validate` before the data matters.
-      - key: SPRING_JPA_HIBERNATE_DDL_AUTO
-        value: update
+      # Only the credentials are asked for, and only because they grant access.
+      # `sync: false` means Render prompts once and stores the value itself,
+      # instead of it living in this file and therefore in the repository.
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+
+      # No SPRING_JPA_HIBERNATE_DDL_AUTO here on purpose. The prod profile uses
+      # ddl-auto=validate and the Aiven schema already exists, so Hibernate checks
+      # it and starts. Setting `update` would let the schema drift silently instead
+      # of failing when the entities and the database disagree.
 
       # Asked for at deploy time rather than committed.
       #
@@ -83,11 +58,12 @@ services:
       - key: FILE_BASE_URL
         sync: false
 
-      # Uploads land on the container filesystem, which is recreated on every
-      # deploy and on every restart. Fine for a demo; anything that must survive
-      # needs object storage (S3/R2) or a Render disk.
+      # /app/data is the directory the Dockerfile creates and hands to the
+      # non-root user. It is still container-local: recreated on every deploy and
+      # restart, so uploads do not survive. Anything that must needs object
+      # storage (S3/R2) or a mounted disk.
       - key: FILE_SERVER_PATH
-        value: /tmp/uploads/
+        value: /app/data/uploads/
 
       # Interactive docs are off in prod by default. Flip these to true if you
       # want to click through Swagger on the deployed instance, remembering that

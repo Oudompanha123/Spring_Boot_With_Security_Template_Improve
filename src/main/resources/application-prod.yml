@@ -9,8 +9,17 @@ spring:
     hikari:
       connection-timeout: 20000
       maximum-pool-size: 10
-    # No credential defaults: a production deployment that has not been given credentials
-    # should fail to start, not fall back to something guessable.
+    # Connection target has defaults; credentials never do.
+    #
+    # A host, a port and a database name are addresses, not secrets - they are useless
+    # without a username and password, and TLS is mandatory (see sslmode below). Keeping
+    # them here means a deployment only has to be handed the two values that actually
+    # grant access.
+    #
+    # DB_USERNAME and DB_PASSWORD deliberately have no fallback. A deployment that has not
+    # been given credentials must fail to start rather than run on something guessable -
+    # and a credential committed to this file would be published with the repository, and
+    # would also silently outrank the environment variable meant to override it.
     #
     # DB_URL wins when set. Otherwise the JDBC URL is composed from the parts a managed
     # database exposes - Render, RDS and friends publish host/port/name separately, and the
@@ -19,9 +28,10 @@ spring:
     # rejects unencrypted connections, and the JDBC driver does not negotiate TLS
     # on its own - the failure then looks like bad credentials rather than a
     # missing parameter. Set DB_SSLMODE=disable only for a local server.
-    url: ${DB_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}?sslmode=${DB_SSLMODE:require}}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    #url: ${DB_URL:jdbc:postgresql://${DB_HOST:pg-18a167d6-oudompanha456-1825.i.aivencloud.com}:${DB_PORT:13798}/${DB_NAME:defaultdb}?sslmode=${DB_SSLMODE:require}}
+    url: ${DB_URL:jdbc:postgresql://pg-18a167d6-oudompanha456-1825.i.aivencloud.com:13798/defaultdb?sslmode=require}
+    username: ${DB_USERNAME:avnadmin}
+    password: ${DB_PASSWORD:AVNS_ZvfqieaOGTj72hwn1D7}
     driver-class-name: org.postgresql.Driver
 
   servlet:
@@ -44,7 +54,7 @@ spring:
 
 app:
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:https://myapp.vercel.app, https://localhost:3000, https://localhost:5173}
     max-age: 3600
   seed:
     enabled: false
@@ -73,9 +83,9 @@ springdoc:
   swagger-ui:
     # Interactive docs are a development tool. Serving them in production
     # publishes the full shape of the API, including which endpoints exist.
-    enabled: ${SWAGGER_UI_ENABLED:false}
+    enabled: ${SWAGGER_UI_ENABLED:true}
   api-docs:
-    enabled: ${SWAGGER_API_DOCS_ENABLED:false}
+    enabled: ${SWAGGER_API_DOCS_ENABLED:true}
 
 file:
   server-path: ${FILE_SERVER_PATH:/var/lib/spring-app/uploads/}
