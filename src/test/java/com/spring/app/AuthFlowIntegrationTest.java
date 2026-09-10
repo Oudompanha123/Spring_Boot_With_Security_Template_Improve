@@ -221,28 +221,38 @@ class AuthFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("the token response carries tokens only, no user data")
-    void tokenResponseHasNoUserData() throws Exception {
+    @DisplayName("login returns the status/res envelope with snake_case tokens, sub and scope")
+    void loginResponseShape() throws Exception {
         mockMvc.perform(signup(EMAIL, "jane_doe", PASSWORD)).andExpect(status().isCreated());
 
         String body = mockMvc.perform(login(EMAIL, PASSWORD))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
-                .andExpect(jsonPath("$.data.expiresIn").isNumber())
-                // No profile block, and no profile fields hoisted to the top level either.
-                .andExpect(jsonPath("$.data.user").doesNotExist())
-                .andExpect(jsonPath("$.data.email").doesNotExist())
-                .andExpect(jsonPath("$.data.username").doesNotExist())
-                .andExpect(jsonPath("$.data.role").doesNotExist())
-                .andExpect(jsonPath("$.data.id").doesNotExist())
+                .andExpect(jsonPath("$.status.code").value(200))
+                .andExpect(jsonPath("$.status.message").value("Success"))
+                .andExpect(jsonPath("$.res.data.access_token").isNotEmpty())
+                .andExpect(jsonPath("$.res.data.refresh_token").isNotEmpty())
+                .andExpect(jsonPath("$.res.data.token_type").value("Bearer"))
+                .andExpect(jsonPath("$.res.data.expires_in").isNumber())
+                // Both describe the role: sub is the lowercased authority, scope the bare name.
+                .andExpect(jsonPath("$.res.sub").value("role_user"))
+                .andExpect(jsonPath("$.res.scope").value("USER"))
+                // Not the username, and not the email - neither belongs in a role field.
+                .andExpect(jsonPath("$.res.sub").value(org.hamcrest.Matchers.not("jane_doe")))
+                // Login alone uses `res`; nothing should still be published under `data`.
+                .andExpect(jsonPath("$.data").doesNotExist())
+                // snake_case only - no camelCase duplicates left behind.
+                .andExpect(jsonPath("$.res.data.accessToken").doesNotExist())
+                .andExpect(jsonPath("$.res.data.expiresIn").doesNotExist())
+                // sub and scope are the whole of the account data: no profile, no email, no id.
+                .andExpect(jsonPath("$.res.user").doesNotExist())
+                .andExpect(jsonPath("$.res.email").doesNotExist())
+                .andExpect(jsonPath("$.res.id").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
 
         // The email must not appear anywhere in the body - including inside the tokens, whose
         // payload is only base64, not encryption. The refresh token no longer carries it; the
         // access token does, which is the deliberate trade that keeps /me free of a database hit.
-        String refreshToken = JsonPath.read(body, "$.data.refreshToken");
+        String refreshToken = JsonPath.read(body, "$.res.data.refresh_token");
         assertThat(decodePayload(refreshToken)).doesNotContain(EMAIL);
 
         // And the same for refresh, which must not reintroduce it.
@@ -262,11 +272,11 @@ class AuthFlowIntegrationTest {
         // defaults. A misspelled property name would fall back to the default and this fails.
         String body = mockMvc.perform(login(EMAIL, PASSWORD))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.expiresIn").value(120))
+                .andExpect(jsonPath("$.res.data.expires_in").value(120))
                 .andReturn().getResponse().getContentAsString();
 
         // expiresIn must describe the token it was sent with, not a config value nothing used.
-        String accessToken = JsonPath.read(body, "$.data.accessToken");
+        String accessToken = JsonPath.read(body, "$.res.data.access_token");
         Map<String, Object> claims = readClaims(accessToken);
         long lifetime = ((Number) claims.get("exp")).longValue() - ((Number) claims.get("iat")).longValue();
         assertThat(lifetime).isEqualTo(120);
@@ -282,7 +292,7 @@ class AuthFlowIntegrationTest {
     void refreshTokenIsAJwt() throws Exception {
         mockMvc.perform(signup(EMAIL, "jane_doe", PASSWORD)).andExpect(status().isCreated());
         String body = mockMvc.perform(login(EMAIL, PASSWORD)).andReturn().getResponse().getContentAsString();
-        String refreshToken = JsonPath.read(body, "$.data.refreshToken");
+        String refreshToken = JsonPath.read(body, "$.res.data.refresh_token");
 
         assertThat(refreshToken.split("\\.")).hasSize(3);
 
@@ -366,7 +376,7 @@ class AuthFlowIntegrationTest {
     void refreshTokenIsNotAnAccessToken() throws Exception {
         mockMvc.perform(signup(EMAIL, "jane_doe", PASSWORD)).andExpect(status().isCreated());
         String body = mockMvc.perform(login(EMAIL, PASSWORD)).andReturn().getResponse().getContentAsString();
-        String refreshToken = JsonPath.read(body, "$.data.refreshToken");
+        String refreshToken = JsonPath.read(body, "$.res.data.refresh_token");
 
         mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + refreshToken))
                 .andExpect(status().isUnauthorized())
@@ -380,7 +390,7 @@ class AuthFlowIntegrationTest {
     void refreshRotatesTheToken() throws Exception {
         mockMvc.perform(signup(EMAIL, "jane_doe", PASSWORD)).andExpect(status().isCreated());
         String loginBody = mockMvc.perform(login(EMAIL, PASSWORD)).andReturn().getResponse().getContentAsString();
-        String firstRefresh = JsonPath.read(loginBody, "$.data.refreshToken");
+        String firstRefresh = JsonPath.read(loginBody, "$.res.data.refresh_token");
 
         String refreshBody = mockMvc.perform(refresh(firstRefresh))
                 .andExpect(status().isOk())
@@ -401,8 +411,8 @@ class AuthFlowIntegrationTest {
     void logoutRevokesRefreshToken() throws Exception {
         mockMvc.perform(signup(EMAIL, "jane_doe", PASSWORD)).andExpect(status().isCreated());
         String loginBody = mockMvc.perform(login(EMAIL, PASSWORD)).andReturn().getResponse().getContentAsString();
-        String accessToken = JsonPath.read(loginBody, "$.data.accessToken");
-        String refreshToken = JsonPath.read(loginBody, "$.data.refreshToken");
+        String accessToken = JsonPath.read(loginBody, "$.res.data.access_token");
+        String refreshToken = JsonPath.read(loginBody, "$.res.data.refresh_token");
 
         mockMvc.perform(post("/api/v1/auth/logout").header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk());
@@ -509,6 +519,6 @@ class AuthFlowIntegrationTest {
         String body = mockMvc.perform(loginRequest)
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        return JsonPath.read(body, "$.data.accessToken");
+        return JsonPath.read(body, "$.res.data.access_token");
     }
 }

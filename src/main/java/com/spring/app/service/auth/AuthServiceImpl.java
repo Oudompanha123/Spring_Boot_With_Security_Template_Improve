@@ -27,6 +27,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
+
 /**
  * Signup, login, refresh and logout.
  *
@@ -206,6 +208,15 @@ public class AuthServiceImpl implements AuthService {
                 .refreshToken(refreshToken.token())
                 .tokenType("Bearer")
                 .expiresIn(tokenProvider.getAccessTtlSeconds())
+                // Both derived from the role, per the agreed login contract: `sub` is the Spring
+                // authority lowercased (ROLE_MANAGER -> role_manager) and `scope` is the bare role
+                // name (MANAGER). Neither identifies the account - the access token carries that.
+                //
+                // Locale.ROOT is not decoration: under a Turkish locale the default toLowerCase()
+                // turns the I in ADMIN into a dotless i, so ROLE_ADMIN would become "role_admın"
+                // and no client comparison would ever match it.
+                .sub(user.getRole().authority().toLowerCase(Locale.ROOT))
+                .scope(user.getRole().name())
                 .build();
     }
 

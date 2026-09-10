@@ -89,8 +89,8 @@ class LogHygieneIntegrationTest {
                         .content("{\"email\":\"" + EMAIL + "\",\"password\":\"" + PASSWORD + "\"}"))
                 .andReturn().getResponse().getContentAsString();
 
-        String accessToken = JsonPath.read(loginBody, "$.data.accessToken");
-        String refreshToken = JsonPath.read(loginBody, "$.data.refreshToken");
+        String accessToken = JsonPath.read(loginBody, "$.res.data.access_token");
+        String refreshToken = JsonPath.read(loginBody, "$.res.data.refresh_token");
         String storedHash = userRepository.findByEmail(EMAIL).orElseThrow().getPassword();
 
         // authenticated call, refresh, logout

@@ -4,6 +4,7 @@ import com.spring.app.common.AbstractRestController;
 import com.spring.app.exception.ErrorResponse;
 import com.spring.app.payload.auth.AuthResponse;
 import com.spring.app.payload.auth.LoginRequest;
+import com.spring.app.payload.auth.LoginResponse;
 import com.spring.app.payload.auth.RefreshTokenRequest;
 import com.spring.app.payload.auth.SignupRequest;
 import com.spring.app.payload.user.UserResponse;
@@ -57,16 +58,19 @@ public class AuthController extends AbstractRestController {
                     + "wrong password produce the same 401/A003 body."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Authenticated"),
+            @ApiResponse(responseCode = "200", description = "Authenticated",
+                    content = @Content(schema = @Schema(implementation = LoginResponse.class))),
             @ApiResponse(responseCode = "401", description = "A003 invalid credentials",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "403", description = "A006 account locked / A007 disabled",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
-        AuthResponse response = authService.login(request);
-        return ok(response);
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        AuthResponse tokens = authService.login(request);
+        // Returned directly rather than through ok(): login uses a `status`/`res` envelope of its
+        // own, not the `data` envelope the rest of the API shares. See LoginResponse.
+        return ResponseEntity.ok(LoginResponse.of(tokens));
     }
 
     @Operation(

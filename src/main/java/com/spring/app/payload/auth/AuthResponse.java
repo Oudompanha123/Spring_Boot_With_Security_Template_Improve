@@ -9,10 +9,14 @@ import lombok.NoArgsConstructor;
 /**
  * What login and refresh hand back: a short-lived access token and the means to renew it.
  *
- * <p>Tokens only. No profile, no email, no role — the access token already carries what a client
- * needs to render itself, and {@code GET /api/v1/me} returns the profile for anything more.
- * Repeating account data in every login and refresh response only widens where it gets copied:
- * proxy logs, browser storage, crash reports.
+ * <p>Internal carrier, not the wire shape: {@code LoginResponse} maps this into the
+ * {@code status}/{@code res} envelope the login endpoint returns.
+ *
+ * <p>It carries {@link #sub} and {@link #scope} — the username and the role — because the login
+ * contract asks for them, mirroring the OAuth2 token response. Deliberately nothing beyond those
+ * two: no email, no id, no profile block. The access token already carries what a client needs to
+ * render itself, and {@code GET /api/v1/me} returns the rest on demand, so anything extra here
+ * only widens where account data gets copied — proxy logs, browser storage, crash reports.
  */
 @Data
 @NoArgsConstructor
@@ -31,6 +35,12 @@ public class AuthResponse {
     @Builder.Default
     private String tokenType = "Bearer";
 
-    @Schema(description = "Access token lifetime in seconds", example = "900")
+    @Schema(description = "Access token lifetime in seconds", example = "300")
     private Long expiresIn;
+
+    @Schema(description = "The granted authority, lowercased", example = "role_manager")
+    private String sub;
+
+    @Schema(description = "The granted role", example = "MANAGER")
+    private String scope;
 }
